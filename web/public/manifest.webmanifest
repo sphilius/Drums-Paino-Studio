@@ -1,0 +1,13 @@
+{
+  "name": "BeatCraft Workstation",
+  "short_name": "BeatCraft",
+  "description": "Drum pad + piano roll hybrid sequencer for touchscreens",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "orientation": "any",
+  "icons": [
+    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

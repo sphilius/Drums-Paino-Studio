@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Matches context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)/Exports used for WAV/stem/MIDI exports -->
+    <external-files-path name="exports" path="Music/Exports/" />
+</paths>

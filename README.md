@@ -2,11 +2,37 @@
 <img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
 </div>
 
-# Run and deploy your AI Studio app
+# BeatCraft Workstation
 
-This contains everything you need to run your app locally.
+A drum pad + piano roll hybrid sequencer for hobbyist producers, built with Jetpack Compose
+and a custom low-latency Kotlin audio engine. This contains everything you need to run your
+app locally.
 
 View your app in AI Studio: https://ai.studio/apps/3c11a730-6c5b-415a-be71-03b37e0b9a2a
+
+## Features
+
+- **Drum pads + piano roll sequencer** with a shared step-sequencer clock, per-track mute,
+  one-tap "duplicate previous bar" / randomize, and haptic + press-animation tactile pads.
+- **Sound design**: tap the tune icon on any pad to reshape its procedural synthesis
+  (tune/decay/tone) live, or swap the whole kit via a **Sound Pack**.
+- **Melody assistance**: pick a key + scale on the Piano tab to highlight in-key notes, with
+  an optional Scale Lock so out-of-key notes can't be placed by accident.
+- **Low-latency audio engine**: `AudioTrack` runs in `PERFORMANCE_MODE_LOW_LATENCY` for tight
+  pad/MIDI round-trip, alongside real Android `MidiManager` controller input.
+- **Real-time export for live sets**: render the full mix to WAV, export isolated
+  Drums/Synth/Vocal stems, or export a Standard MIDI File — all from the transport bar.
+- **Community Library tab**: save/apply Sound Packs and synth presets, share them as JSON
+  through any messaging/email app, and share rendered stems via the OS share sheet.
+- **Adaptive layout**: a side `NavigationRail` replaces the bottom bar on tablets/Chromebook
+  desktop windows, so the same app scales from phone to desktop workstation.
+
+## Play it in a browser
+
+The [`web/`](web/) directory is a touchscreen-first web version of this app — same
+sequencing model and sound-pack format, reimplemented on the Web Audio API so it runs
+on any phone/tablet/desktop with no install, and deploys as a static site to Vercel or
+Cloudflare Pages. See [`web/README.md`](web/README.md) for local dev and deploy steps.
 
 ## Run Locally
 
