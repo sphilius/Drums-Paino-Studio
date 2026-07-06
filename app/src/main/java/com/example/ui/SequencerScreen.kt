@@ -27,23 +27,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.audio.AudioEngine
 import com.example.audio.DrumSound
+import com.example.audio.DrumVoiceParams
+import com.example.audio.MusicTheory
+import com.example.audio.ScaleType
 import com.example.audio.Waveform
 import com.example.database.ProjectEntity
 import kotlinx.coroutines.delay
@@ -92,6 +101,21 @@ fun SequencerScreen(viewModel: SequencerViewModel) {
         }
     }
 
+    // Adaptive layout: tablets, foldables and Chromebook/desktop windows get a side
+    // NavigationRail instead of a bottom bar so the tactile controls stay reachable.
+    val isWideScreen = LocalConfiguration.current.screenWidthDp >= 700
+
+    val tabs = listOf(
+        NavigationItem("Pads", Icons.Default.GridOn, 0),
+        NavigationItem("Seq", Icons.Default.LinearScale, 1),
+        NavigationItem("Piano", Icons.Default.Piano, 2),
+        NavigationItem("Vocal", Icons.Default.Mic, 3),
+        NavigationItem("VST FX", Icons.Default.Tune, 4),
+        NavigationItem("Mixer", Icons.Default.Equalizer, 5),
+        NavigationItem("Sync", Icons.Default.SyncAlt, 6),
+        NavigationItem("Library", Icons.Default.LibraryMusic, 7)
+    )
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -136,84 +160,116 @@ fun SequencerScreen(viewModel: SequencerViewModel) {
             )
         },
         bottomBar = {
-            // Elegant Navigation bar for studio tabs
-            NavigationBar(
-                containerColor = Color(0xCC0F1115), // slate-950/80 bottom glass
-                tonalElevation = 8.dp,
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = Color(0x1AFFFFFF), // white with 10% opacity top border
-                        start = Offset(0f, 0f),
-                        end = Offset(size.width, 0f),
-                        strokeWidth = 2f
-                    )
-                }
-            ) {
-                val tabs = listOf(
-                    NavigationItem("Pads", Icons.Default.GridOn, 0),
-                    NavigationItem("Seq", Icons.Default.LinearScale, 1),
-                    NavigationItem("Piano", Icons.Default.Piano, 2),
-                    NavigationItem("Vocal", Icons.Default.Mic, 3),
-                    NavigationItem("VST FX", Icons.Default.Tune, 4),
-                    NavigationItem("Mixer", Icons.Default.Equalizer, 5),
-                    NavigationItem("Sync", Icons.Default.SyncAlt, 6)
-                )
-
-                tabs.forEach { tab ->
-                    NavigationBarItem(
-                        selected = activeTab == tab.index,
-                        onClick = { viewModel.selectTab(tab.index) },
-                        icon = { Icon(tab.icon, contentDescription = tab.title) },
-                        label = { Text(tab.title, fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = CyberBlue,
-                            selectedTextColor = CyberBlue,
-                            unselectedIconColor = Color.Gray,
-                            unselectedTextColor = Color.Gray,
-                            indicatorColor = StudioCardBg
+            if (!isWideScreen) {
+                // Elegant Navigation bar for studio tabs (phones/portrait tablets)
+                NavigationBar(
+                    containerColor = Color(0xCC0F1115), // slate-950/80 bottom glass
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.drawBehind {
+                        drawLine(
+                            color = Color(0x1AFFFFFF), // white with 10% opacity top border
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, 0f),
+                            strokeWidth = 2f
                         )
-                    )
+                    }
+                ) {
+                    tabs.forEach { tab ->
+                        NavigationBarItem(
+                            selected = activeTab == tab.index,
+                            onClick = { viewModel.selectTab(tab.index) },
+                            icon = { Icon(tab.icon, contentDescription = tab.title) },
+                            label = { Text(tab.title, fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = CyberBlue,
+                                selectedTextColor = CyberBlue,
+                                unselectedIconColor = Color.Gray,
+                                unselectedTextColor = Color.Gray,
+                                indicatorColor = StudioCardBg
+                            )
+                        )
+                    }
                 }
             }
         },
         containerColor = StudioDarkBg
     ) { innerPadding ->
 
-        Column(
+        Row(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .background(StudioDarkBg)
         ) {
-            // Master Clock & Transport Bar
-            TransportBar(
-                bpm = bpm,
-                isPlaying = isPlaying,
-                isRecording = isRecordingSeq,
-                currentStep = currentStep,
-                maxSteps = viewModel.getBarCount() * 16,
-                onPlayToggle = { viewModel.togglePlayback() },
-                onRecordToggle = { viewModel.toggleRecording() },
-                onBpmChange = { viewModel.updateBpm(it) },
-                onExportWav = { viewModel.exportToDeviceWav(context) }
-            )
+            if (isWideScreen) {
+                // Desktop/tablet workstation layout: a persistent side rail keeps every
+                // studio module one tap away, matching how a DAW keeps its module switcher visible.
+                NavigationRail(
+                    containerColor = Color(0xCC0F1115),
+                    modifier = Modifier.drawBehind {
+                        drawLine(
+                            color = Color(0x1AFFFFFF),
+                            start = Offset(size.width, 0f),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = 2f
+                        )
+                    }
+                ) {
+                    tabs.forEach { tab ->
+                        NavigationRailItem(
+                            selected = activeTab == tab.index,
+                            onClick = { viewModel.selectTab(tab.index) },
+                            icon = { Icon(tab.icon, contentDescription = tab.title) },
+                            label = { Text(tab.title, fontSize = 9.sp, fontWeight = FontWeight.Bold) },
+                            colors = NavigationRailItemDefaults.colors(
+                                selectedIconColor = CyberBlue,
+                                selectedTextColor = CyberBlue,
+                                unselectedIconColor = Color.Gray,
+                                unselectedTextColor = Color.Gray,
+                                indicatorColor = StudioCardBg
+                            )
+                        )
+                    }
+                }
+            }
 
-            HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
-
-            // Dynamic Tab Workspace
-            Box(
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .background(StudioDarkBg)
             ) {
-                when (activeTab) {
-                    0 -> DrumPadsView(viewModel)
-                    1 -> DrumSequencerView(viewModel)
-                    2 -> PianoRollView(viewModel)
-                    3 -> VocalRecorderView(viewModel)
-                    4 -> VstFxRackView(viewModel)
-                    5 -> MixerConsoleView(viewModel)
-                    6 -> CloudSyncView(viewModel)
+                // Master Clock & Transport Bar
+                TransportBar(
+                    bpm = bpm,
+                    isPlaying = isPlaying,
+                    isRecording = isRecordingSeq,
+                    currentStep = currentStep,
+                    maxSteps = viewModel.getBarCount() * 16,
+                    onPlayToggle = { viewModel.togglePlayback() },
+                    onRecordToggle = { viewModel.toggleRecording() },
+                    onBpmChange = { viewModel.updateBpm(it) },
+                    onExportWav = { viewModel.exportToDeviceWav(context) },
+                    onExportStems = { viewModel.exportStems(context) },
+                    onExportMidi = { viewModel.exportMidiFile(context) }
+                )
+
+                HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
+
+                // Dynamic Tab Workspace
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    when (activeTab) {
+                        0 -> DrumPadsView(viewModel)
+                        1 -> DrumSequencerView(viewModel)
+                        2 -> PianoRollView(viewModel)
+                        3 -> VocalRecorderView(viewModel)
+                        4 -> VstFxRackView(viewModel)
+                        5 -> MixerConsoleView(viewModel)
+                        6 -> CloudSyncView(viewModel)
+                        7 -> CommunityLibraryView(viewModel)
+                    }
                 }
             }
         }
@@ -276,7 +332,9 @@ fun TransportBar(
     onPlayToggle: () -> Unit,
     onRecordToggle: () -> Unit,
     onBpmChange: (Int) -> Unit,
-    onExportWav: () -> Unit
+    onExportWav: () -> Unit,
+    onExportStems: () -> Unit,
+    onExportMidi: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -349,18 +407,38 @@ fun TransportBar(
                 )
             }
 
-            // Export WAV Icon
-            Button(
-                onClick = onExportWav,
-                colors = ButtonDefaults.buttonColors(containerColor = CyberBlue.copy(alpha = 0.15f)),
-                border = BorderStroke(1.dp, CyberBlue),
-                shape = RoundedCornerShape(6.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Download, contentDescription = "Export WAV", tint = CyberBlue, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("WAV", color = CyberBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            // Real-time Export Menu: full mix WAV, isolated stems, or a Standard MIDI File
+            Box {
+                var showExportMenu by remember { mutableStateOf(false) }
+                Button(
+                    onClick = { showExportMenu = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = CyberBlue.copy(alpha = 0.15f)),
+                    border = BorderStroke(1.dp, CyberBlue),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Download, contentDescription = "Export", tint = CyberBlue, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("EXPORT", color = CyberBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    }
+                }
+                DropdownMenu(expanded = showExportMenu, onDismissRequest = { showExportMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Full Mix (WAV)") },
+                        leadingIcon = { Icon(Icons.Default.MusicNote, contentDescription = null) },
+                        onClick = { showExportMenu = false; onExportWav() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Stems (Drums/Synth/Vocal)") },
+                        leadingIcon = { Icon(Icons.Default.Layers, contentDescription = null) },
+                        onClick = { showExportMenu = false; onExportStems() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("MIDI File (.mid)") },
+                        leadingIcon = { Icon(Icons.Default.Piano, contentDescription = null) },
+                        onClick = { showExportMenu = false; onExportMidi() }
+                    )
                 }
             }
         }
@@ -403,7 +481,9 @@ fun TransportBar(
 @Composable
 fun DrumPadsView(viewModel: SequencerViewModel) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     var padVelocity by remember { mutableStateOf(1.0f) }
+    var soundDesignSound by remember { mutableStateOf<DrumSound?>(null) }
 
     Column(
         modifier = Modifier
@@ -457,15 +537,26 @@ fun DrumPadsView(viewModel: SequencerViewModel) {
                         uri?.let { viewModel.importSampleForPad(context, sound, it) }
                     }
 
+                    // Tactile feedback: pads shrink slightly and buzz on tap, like hardware MPC pads
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+                    val padScale by animateFloatAsState(if (isPressed) 0.92f else 1f, label = "padScale")
+
                     Box(
                         modifier = Modifier
                             .aspectRatio(1.0f)
+                            .graphicsLayer { scaleX = padScale; scaleY = padScale }
                             .shadow(4.dp, RoundedCornerShape(12.dp))
                             .clip(RoundedCornerShape(12.dp))
                             .background(StudioCardBg)
                             .border(1.dp, colorAccent.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
                             .combinedClickable(
-                                onClick = { viewModel.playDrumPad(sound) },
+                                interactionSource = interactionSource,
+                                indication = null,
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.playDrumPad(sound)
+                                },
                                 onLongClick = { samplePickerLauncher.launch("audio/*") }
                             ),
                         contentAlignment = Alignment.Center
@@ -495,6 +586,21 @@ fun DrumPadsView(viewModel: SequencerViewModel) {
                                 color = Color.Gray,
                                 fontSize = 8.sp,
                                 fontFamily = FontFamily.Monospace
+                            )
+                        }
+
+                        // Sound Design: tune this pad's procedural synthesis (tune/decay/tone)
+                        IconButton(
+                            onClick = { soundDesignSound = sound },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(22.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = "Sound design for ${sound.displayName}",
+                                tint = Color.White.copy(alpha = 0.55f),
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
@@ -536,13 +642,102 @@ fun DrumPadsView(viewModel: SequencerViewModel) {
         }
         
         Text(
-            text = "Tip: Long-press a pad to import a custom high-quality sample!",
+            text = "Tip: Long-press a pad to import a custom sample, tap the tune icon to sound-design it.",
             color = Color.Gray,
             fontSize = 10.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp)
         )
     }
+
+    soundDesignSound?.let { sound ->
+        SoundDesignDialog(
+            sound = sound,
+            initialParams = viewModel.getDrumVoiceParams(sound),
+            viewModel = viewModel,
+            onDismiss = { soundDesignSound = null }
+        )
+    }
+}
+
+/**
+ * Sound design panel for a single drum pad: tune/decay/tone map onto that voice's
+ * procedural synthesis recipe and preview live, so shaping a kit is a hands-on,
+ * hear-it-as-you-turn-the-knob workflow rather than picking from a static sample list.
+ */
+@Composable
+fun SoundDesignDialog(
+    sound: DrumSound,
+    initialParams: DrumVoiceParams,
+    viewModel: SequencerViewModel,
+    onDismiss: () -> Unit
+) {
+    var tune by remember { mutableStateOf(initialParams.tune) }
+    var decay by remember { mutableStateOf(initialParams.decay) }
+    var tone by remember { mutableStateOf(initialParams.tone) }
+
+    fun push(newTune: Float = tune, newDecay: Float = decay, newTone: Float = tone) {
+        viewModel.updateDrumVoiceParams(sound, DrumVoiceParams(newTune, newDecay, newTone))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sound Design: ${sound.displayName}", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(
+                    "Shape this pad's synthesis — every change previews instantly.",
+                    color = Color.Gray,
+                    fontSize = 10.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text("Tune: ${String.format("%.1f", tune)} st", color = CyberBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Slider(
+                    value = tune,
+                    onValueChange = { tune = it; push(newTune = it) },
+                    valueRange = -12f..12f,
+                    colors = SliderDefaults.colors(thumbColor = CyberBlue, activeTrackColor = CyberBlue)
+                )
+
+                Text("Decay: ${String.format("%.2f", decay)}x", color = CyberPink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Slider(
+                    value = decay,
+                    onValueChange = { decay = it; push(newDecay = it) },
+                    valueRange = 0.3f..2.5f,
+                    colors = SliderDefaults.colors(thumbColor = CyberPink, activeTrackColor = CyberPink)
+                )
+
+                Text("Tone: ${String.format("%.2f", tone)}", color = CyberGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Slider(
+                    value = tone,
+                    onValueChange = { tone = it; push(newTone = it) },
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(thumbColor = CyberGreen, activeTrackColor = CyberGreen)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.playDrumPad(sound) },
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkGrey)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Preview", tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Preview Pad", color = Color.White)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done", color = CyberBlue, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                tune = 0f; decay = 1f; tone = 0.5f
+                push(0f, 1f, 0.5f)
+            }) { Text("Reset", color = Color.Gray) }
+        },
+        containerColor = StudioCardBg
+    )
 }
 
 /**
@@ -572,7 +767,7 @@ fun DrumSequencerView(viewModel: SequencerViewModel) {
                 fontFamily = FontFamily.Monospace
             )
 
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 listOf(1, 2, 4).forEach { bars ->
                     Button(
                         onClick = { viewModel.updateBarCount(bars) },
@@ -593,6 +788,20 @@ fun DrumSequencerView(viewModel: SequencerViewModel) {
                         )
                     }
                 }
+
+                // Rapid workflow: clone the previous bar forward instead of re-tapping every step
+                IconButton(
+                    onClick = { viewModel.duplicateLastBar() },
+                    enabled = barCount > 1,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Duplicate previous bar",
+                        tint = if (barCount > 1) CyberOrange else Color.DarkGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
 
@@ -608,7 +817,7 @@ fun DrumSequencerView(viewModel: SequencerViewModel) {
             Column {
                 // Steps label header (1..16/32/64)
                 Row(modifier = Modifier.padding(bottom = 6.dp)) {
-                    Box(modifier = Modifier.width(85.dp)) // spacer for sound name column
+                    Box(modifier = Modifier.width(122.dp)) // spacer for sound name + mute/randomize column
                     for (step in 0 until totalSteps) {
                         val activeStep by viewModel.currentStep.collectAsStateWithLifecycle()
                         val isPlayhead = activeStep == step
@@ -637,22 +846,47 @@ fun DrumSequencerView(viewModel: SequencerViewModel) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(DrumSound.entries) { sound ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Track sound Label
-                            Box(
+                            // Track sound label + rapid-workflow mute/randomize actions
+                            val isMuted = viewModel.isDrumMuted(sound)
+                            Row(
                                 modifier = Modifier
-                                    .width(85.dp)
+                                    .width(122.dp)
                                     .height(34.dp)
                                     .background(StudioCardBg, RoundedCornerShape(4.dp)),
-                                contentAlignment = Alignment.CenterStart
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                IconButton(
+                                    onClick = { viewModel.toggleDrumMute(sound) },
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Icon(
+                                        if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                        contentDescription = if (isMuted) "Unmute ${sound.displayName}" else "Mute ${sound.displayName}",
+                                        tint = if (isMuted) CyberPink else Color.Gray,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                                 Text(
                                     text = sound.displayName,
-                                    color = Color.White,
-                                    fontSize = 11.sp,
+                                    color = if (isMuted) Color.Gray else Color.White,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(start = 6.dp)
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                IconButton(
+                                    onClick = { viewModel.randomizeDrumTrack(sound) },
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Shuffle,
+                                        contentDescription = "Randomize ${sound.displayName}",
+                                        tint = CyberGreen,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
 
                             // Steps row
@@ -692,6 +926,9 @@ fun DrumSequencerView(viewModel: SequencerViewModel) {
 @Composable
 fun PianoRollView(viewModel: SequencerViewModel) {
     val synthWave by viewModel.synthWave.collectAsStateWithLifecycle()
+    val scaleRoot by viewModel.scaleRoot.collectAsStateWithLifecycle()
+    val scaleType by viewModel.scaleType.collectAsStateWithLifecycle()
+    val scaleLockEnabled by viewModel.scaleLockEnabled.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
     val totalSteps = viewModel.getBarCount() * 16
 
@@ -749,6 +986,53 @@ fun PianoRollView(viewModel: SequencerViewModel) {
             }
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Melody assistance: pick a key/scale to highlight in-key notes, optionally lock to them
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(StudioCardBg, RoundedCornerShape(6.dp))
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            var showKeyMenu by remember { mutableStateOf(false) }
+            var showScaleMenu by remember { mutableStateOf(false) }
+
+            Box {
+                TextButton(onClick = { showKeyMenu = true }) {
+                    Text("Key: ${MusicTheory.pitchClassNames[scaleRoot]}", color = CyberGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                DropdownMenu(expanded = showKeyMenu, onDismissRequest = { showKeyMenu = false }) {
+                    MusicTheory.pitchClassNames.forEachIndexed { index, name ->
+                        DropdownMenuItem(text = { Text(name) }, onClick = { viewModel.setScaleRoot(index); showKeyMenu = false })
+                    }
+                }
+            }
+
+            Box {
+                TextButton(onClick = { showScaleMenu = true }) {
+                    Text(scaleType.displayName, color = CyberGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                DropdownMenu(expanded = showScaleMenu, onDismissRequest = { showScaleMenu = false }) {
+                    ScaleType.entries.forEach { type ->
+                        DropdownMenuItem(text = { Text(type.displayName) }, onClick = { viewModel.setScaleType(type); showScaleMenu = false })
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Scale Lock", color = Color.LightGray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Switch(
+                    checked = scaleLockEnabled,
+                    onCheckedChange = { viewModel.toggleScaleLock() },
+                    colors = SwitchDefaults.colors(checkedThumbColor = CyberGreen, checkedTrackColor = CyberGreen.copy(alpha = 0.4f)),
+                    modifier = Modifier.padding(start = 6.dp)
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
         // Piano keyboard and grid space
@@ -770,12 +1054,13 @@ fun PianoRollView(viewModel: SequencerViewModel) {
                     Spacer(modifier = Modifier.height(30.dp)) // offset for step headers
                     notes.forEach { note ->
                         val isBlackKey = noteNameNames(note).contains("#")
+                        val inScale = viewModel.isNoteInScale(note)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(32.dp)
                                 .background(if (isBlackKey) Color.Black else Color.White)
-                                .border(1.dp, Color.Gray)
+                                .border(if (inScale) 2.dp else 1.dp, if (inScale) CyberGreen else Color.Gray)
                                 .clickable {
                                     AudioEngine.triggerSynthKey(note, 1.0f)
                                     // auto-release piano keys
@@ -830,6 +1115,7 @@ fun PianoRollView(viewModel: SequencerViewModel) {
 
                         // Matrix grid
                         notes.forEach { note ->
+                            val inScale = viewModel.isNoteInScale(note)
                             Row {
                                 for (step in 0 until totalSteps) {
                                     val isActive = viewModel.isSynthStepActive(step, note)
@@ -839,7 +1125,8 @@ fun PianoRollView(viewModel: SequencerViewModel) {
                                     val bgClr = when {
                                         isActive -> CyberPink
                                         isPlayhead -> Color.DarkGray.copy(alpha = 0.4f)
-                                        else -> StudioCardBg
+                                        inScale -> StudioCardBg
+                                        else -> StudioDarkBg
                                     }
 
                                     Box(
@@ -1453,7 +1740,7 @@ fun RowScope.MixerFaderColumn(label: String, valFader: Float, colorTheme: Color,
                 ),
                 modifier = Modifier
                     .fillMaxHeight()
-                    .graphicsLayer(rotationZ = 270f) // Rotates normal slider vertical!
+                    .asVerticalSlider() // Rotates the normal horizontal Material Slider vertical!
             )
         }
 
@@ -1467,11 +1754,28 @@ fun RowScope.MixerFaderColumn(label: String, valFader: Float, colorTheme: Color,
 }
 
 /**
- * Graphics helper to rotate sliders without weird layout sizing bugs
+ * Rotates a horizontal Material Slider into a vertical mixer fader: measures the slider
+ * with swapped width/height constraints (so its drag track runs the fader's full length),
+ * then rotates the rendered result 270° back into the vertical footprint the layout expects.
  */
-fun Modifier.graphicsLayer(rotationZ: Float): Modifier = this.drawBehind {
-    // Rotation graphics logic simple proxy
-}
+fun Modifier.asVerticalSlider(): Modifier = this
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(
+            Constraints(
+                minWidth = constraints.minHeight,
+                maxWidth = constraints.maxHeight,
+                minHeight = constraints.minWidth,
+                maxHeight = constraints.maxWidth
+            )
+        )
+        layout(placeable.height, placeable.width) {
+            placeable.place(
+                x = -(placeable.width / 2 - placeable.height / 2),
+                y = -(placeable.height / 2 - placeable.width / 2)
+            )
+        }
+    }
+    .graphicsLayer(rotationZ = 270f)
 
 /**
  * Tab 6: Remote Collaboration & Cloud Synchronization Setup Panel

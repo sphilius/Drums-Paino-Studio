@@ -2,6 +2,7 @@ package com.example.audio
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -240,6 +241,14 @@ object AudioEngine {
     val customDrumSamples = Array<FloatArray?>(DrumSound.entries.size) { null }
     val customDrumSampleRates = IntArray(DrumSound.entries.size) { SAMPLE_RATE }
 
+    // Sound design: per-voice procedural synthesis recipe (tune/decay/tone), swappable as a Sound Pack
+    val drumVoiceParams = Array(DrumSound.entries.size) { DrumVoiceParams() }
+    private val _activeSoundPackName = MutableStateFlow("Studio Standard")
+    val activeSoundPackName = _activeSoundPackName.asStateFlow()
+
+    // Per-track mute (silences a drum voice during sequenced/offline playback, live pad taps still audition it)
+    val drumMuted = BooleanArray(DrumSound.entries.size)
+
     // Active triggers (for real-time playback or sample indices)
     private class ActiveTrigger(val pcm: FloatArray, var index: Int, val volume: Float)
     private val activeTriggers = mutableListOf<ActiveTrigger>()
@@ -304,6 +313,7 @@ object AudioEngine {
         context = ctx.applicationContext
         setupMidi()
         initializeDefaultDrumSynth()
+        logLowLatencyCapability()
     }
 
     /**
@@ -311,12 +321,45 @@ object AudioEngine {
      */
     private fun initializeDefaultDrumSynth() {
         // We synthesize custom samples for default high-quality drums at startup
-        customDrumSamples[DrumSound.KICK.ordinal] = generateSynthKick()
-        customDrumSamples[DrumSound.SNARE.ordinal] = generateSynthSnare()
-        customDrumSamples[DrumSound.HIHAT_CLOSED.ordinal] = generateSynthHihat(0.04f)
-        customDrumSamples[DrumSound.HIHAT_OPEN.ordinal] = generateSynthHihat(0.3f)
-        customDrumSamples[DrumSound.CLAP.ordinal] = generateSynthClap()
-        customDrumSamples[DrumSound.TOM.ordinal] = generateSynthTom()
+        DrumSound.entries.forEach { regenerateDrumVoice(it) }
+    }
+
+    /**
+     * Re-synthesize a drum voice's procedural sample from its current [DrumVoiceParams].
+     * Called after sound-design edits or when applying a Sound Pack.
+     */
+    fun regenerateDrumVoice(sound: DrumSound) {
+        val p = drumVoiceParams[sound.ordinal]
+        customDrumSamples[sound.ordinal] = when (sound) {
+            DrumSound.KICK -> generateSynthKick(p.tune, p.decay, p.tone)
+            DrumSound.SNARE -> generateSynthSnare(p.tune, p.decay, p.tone)
+            DrumSound.HIHAT_CLOSED -> generateSynthHihat(0.04f, p.decay, p.tone)
+            DrumSound.HIHAT_OPEN -> generateSynthHihat(0.3f, p.decay, p.tone)
+            DrumSound.CLAP -> generateSynthClap(p.decay, p.tone)
+            DrumSound.TOM -> generateSynthTom(p.tune, p.decay, p.tone)
+        }
+    }
+
+    /** Applies a sound-design tweak to a single pad (from the Sound Design dialog). */
+    fun updateDrumVoiceParams(sound: DrumSound, params: DrumVoiceParams) {
+        drumVoiceParams[sound.ordinal] = params
+        regenerateDrumVoice(sound)
+    }
+
+    /** Swaps every pad's synthesis recipe for a full Sound Pack (built-in or community-shared). */
+    fun applySoundPack(pack: SoundPack) {
+        DrumSound.entries.forEach { sound ->
+            drumVoiceParams[sound.ordinal] = pack.voiceParams[sound.name] ?: DrumVoiceParams()
+            regenerateDrumVoice(sound)
+        }
+        _activeSoundPackName.value = pack.name
+    }
+
+    private fun logLowLatencyCapability() {
+        val pm = context?.packageManager ?: return
+        val hasLowLatency = pm.hasSystemFeature(PackageManager.FEATURE_AUDIO_LOW_LATENCY)
+        val hasPro = pm.hasSystemFeature(PackageManager.FEATURE_AUDIO_PRO)
+        Log.i(TAG, "Device low-latency audio path available: $hasLowLatency, pro audio: $hasPro")
     }
 
     fun startEngine() {
@@ -347,6 +390,9 @@ object AudioEngine {
             )
             .setBufferSizeInBytes(bufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
+            // Requests the platform's fast-mixer/AAudio low-latency output path so pad taps,
+            // live MIDI input, and recording monitoring stay tight enough for live performance.
+            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
 
         audioTrack?.play()
@@ -619,7 +665,7 @@ object AudioEngine {
     private fun triggerSequencerStep(step: Int) {
         // 1. Play drum step notes
         for (sound in DrumSound.entries) {
-            if (drumGrid[sound.ordinal][step]) {
+            if (drumGrid[sound.ordinal][step] && !drumMuted[sound.ordinal]) {
                 val pcm = customDrumSamples[sound.ordinal]
                 if (pcm != null) {
                     synchronized(triggerMutex) {
@@ -661,62 +707,63 @@ object AudioEngine {
     /**
      * procedural drum synthesizers
      */
-    private fun generateSynthKick(): FloatArray {
-        val len = (SAMPLE_RATE * 0.25f).toInt() // 250ms decay
+    private fun generateSynthKick(tune: Float = 0f, decay: Float = 1f, tone: Float = 0.5f): FloatArray {
+        val pitchMul = 2f.pow(tune / 12f)
+        val len = (SAMPLE_RATE * 0.25f * decay).toInt().coerceAtLeast(64)
         val arr = FloatArray(len)
         for (i in 0 until len) {
             val t = i / SAMPLE_RATE.toFloat()
-            val freq = 140f * exp(-28f * t) + 40f
-            val amp = exp(-10f * t)
-            arr[i] = sin(2f * PI * freq * t).toFloat() * amp
+            val freq = (140f * exp(-28f * t / decay) + 40f) * pitchMul
+            val amp = exp(-10f * t / decay)
+            val click = if (t < 0.004f) (1f - t / 0.004f) * tone else 0f
+            arr[i] = (sin(2f * PI * freq * t).toFloat() * (1f - tone * 0.3f) + click) * amp
         }
         return arr
     }
 
-    private fun generateSynthSnare(): FloatArray {
-        val len = (SAMPLE_RATE * 0.18f).toInt() // 180ms decay
+    private fun generateSynthSnare(tune: Float = 0f, decay: Float = 1f, tone: Float = 0.5f): FloatArray {
+        val bodyFreq = 180f * 2f.pow(tune / 12f)
+        val len = (SAMPLE_RATE * 0.18f * decay).toInt().coerceAtLeast(64)
         val arr = FloatArray(len)
         for (i in 0 until len) {
             val t = i / SAMPLE_RATE.toFloat()
             // Sine body
-            val tone = sin(2f * PI * 180f * t).toFloat() * exp(-25f * t) * 0.4f
+            val toneComponent = sin(2f * PI * bodyFreq * t).toFloat() * exp(-25f * t / decay)
             // Filtered-like noise
-            val noiseVal = (rand.nextFloat() * 2f - 1f) * exp(-14f * t) * 0.6f
-            arr[i] = tone + noiseVal
+            val noiseComponent = (rand.nextFloat() * 2f - 1f) * exp(-14f * t / decay)
+            arr[i] = toneComponent * tone * 0.8f + noiseComponent * (1f - tone) * 0.9f
         }
         return arr
     }
 
-    private fun generateSynthHihat(decaySec: Float): FloatArray {
-        val len = (SAMPLE_RATE * decaySec).toInt()
+    private fun generateSynthHihat(decaySec: Float, decayMul: Float = 1f, tone: Float = 0.5f): FloatArray {
+        val effectiveDecay = decaySec * decayMul
+        val len = (SAMPLE_RATE * effectiveDecay).toInt().coerceAtLeast(32)
         val arr = FloatArray(len)
         var lastVal = 0f
+        // brighter tone = stronger high-pass differential; tone=0.5 reproduces the original filter
+        val filterStrength = 0.4f + tone * 1.2f
         for (i in 0 until len) {
             val t = i / SAMPLE_RATE.toFloat()
             val rawNoise = rand.nextFloat() * 2f - 1f
-            // Simple Highpass differential filter
-            val filtered = rawNoise - lastVal
+            val filtered = rawNoise - lastVal * filterStrength
             lastVal = rawNoise
-            arr[i] = filtered * exp(-t / (decaySec * 0.4f)) * 0.35f
+            arr[i] = filtered * exp(-t / (effectiveDecay * 0.4f)) * 0.35f
         }
         return arr
     }
 
-    private fun generateSynthClap(): FloatArray {
-        val len = (SAMPLE_RATE * 0.22f).toInt()
+    private fun generateSynthClap(decay: Float = 1f, tone: Float = 0.5f): FloatArray {
+        val len = (SAMPLE_RATE * 0.22f * decay).toInt().coerceAtLeast(64)
         val arr = FloatArray(len)
+        val burst = 0.01f * decay
         for (i in 0 until len) {
             val t = i / SAMPLE_RATE.toFloat()
-            var amp = 0f
-            // 3 mini pre-bursts
-            if (t < 0.01f) {
-                amp = exp(-150f * t) * 0.4f
-            } else if (t < 0.02f) {
-                amp = exp(-150f * (t - 0.01f)) * 0.5f
-            } else if (t < 0.03f) {
-                amp = exp(-150f * (t - 0.02f)) * 0.6f
-            } else {
-                amp = exp(-16f * (t - 0.03f)) * 0.8f
+            val amp = when {
+                t < burst -> exp(-150f * t / decay) * 0.4f
+                t < burst * 2 -> exp(-150f * (t - burst) / decay) * 0.5f
+                t < burst * 3 -> exp(-150f * (t - burst * 2) / decay) * 0.6f
+                else -> exp(-16f * (t - burst * 3) / decay) * (0.6f + tone * 0.4f)
             }
             val noiseVal = (rand.nextFloat() * 2f - 1f) * amp
             arr[i] = noiseVal * 0.5f
@@ -724,14 +771,17 @@ object AudioEngine {
         return arr
     }
 
-    private fun generateSynthTom(): FloatArray {
-        val len = (SAMPLE_RATE * 0.3f).toInt()
+    private fun generateSynthTom(tune: Float = 0f, decay: Float = 1f, tone: Float = 0.5f): FloatArray {
+        val pitchMul = 2f.pow(tune / 12f)
+        val len = (SAMPLE_RATE * 0.3f * decay).toInt().coerceAtLeast(64)
         val arr = FloatArray(len)
         for (i in 0 until len) {
             val t = i / SAMPLE_RATE.toFloat()
-            val freq = 120f * exp(-12f * t) + 55f
-            val amp = exp(-6f * t)
-            arr[i] = sin(2f * PI * freq * t).toFloat() * amp * 0.6f
+            val freq = (120f * exp(-12f * t / decay) + 55f) * pitchMul
+            val amp = exp(-6f * t / decay)
+            val fundamental = sin(2f * PI * freq * t).toFloat()
+            val overtone = sin(2f * PI * freq * 2f * t).toFloat() * 0.3f
+            arr[i] = (fundamental * (1f - tone * 0.3f) + overtone * tone * 0.3f) * amp * 0.6f
         }
         return arr
     }
@@ -880,190 +930,250 @@ object AudioEngine {
         }
     }
 
+    private data class StemConfig(val label: String, val drums: Boolean, val synth: Boolean, val vocal: Boolean)
+    private val stemConfigs = listOf(
+        StemConfig("Drums", drums = true, synth = false, vocal = false),
+        StemConfig("Synth", drums = false, synth = true, vocal = false),
+        StemConfig("Vocal", drums = false, synth = false, vocal = true)
+    )
+
     /**
-     * Offline Sound Pattern Rendering to high-quality stereo WAV files.
-     * Generates a fully calculated 16-bit PCM WAV container of the pattern.
+     * Offline Sound Pattern Rendering to a high-quality stereo WAV file (full mix).
+     * Safe to call for live-performance "freeze to audio" export mid-set.
      */
     fun exportToWav(outputFile: File, onComplete: (File) -> Unit, onError: (String) -> Unit) {
         thread(start = true) {
             try {
-                val bpmCalc = bpm
-                val totalSteps = maxSteps
-                val samplesPerStep = ((SAMPLE_RATE * 60f) / (bpmCalc * 4f)).toLong()
-                val totalFrames = (samplesPerStep * totalSteps).toInt()
-
-                val wavWriter = FileOutputStream(outputFile)
-                // Write placeholder WAV header
-                writeWavHeader(wavWriter, totalFrames * 2 * 2) // Stereo (2), 16-bit (2 bytes)
-
-                // Instantiate fresh engines for render to avoid interrupting real-time playback
-                val synthVoicesOffline = Array(8) { SynthVoice() }
-                
-                // Track active triggers for drum render
-                class RenderTrigger(val pcm: FloatArray, var index: Int)
-                val renderTriggers = mutableListOf<RenderTrigger>()
-
-                val outBytes = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN)
-
-                // Render block frame-by-frame
-                for (frame in 0 until totalFrames) {
-                    val step = (frame / samplesPerStep).toInt()
-                    val frameInStep = frame % samplesPerStep
-
-                    // Step start trigger
-                    if (frameInStep == 0L) {
-                        // 1. Drums
-                        for (sound in DrumSound.entries) {
-                            if (drumGrid[sound.ordinal][step]) {
-                                customDrumSamples[sound.ordinal]?.let { pcm ->
-                                    renderTriggers.add(RenderTrigger(pcm, 0))
-                                }
-                            }
-                        }
-                        // 2. Synth
-                        synthSequence[step]?.forEach { (pitch, vel) ->
-                            val voice = synthVoicesOffline.firstOrNull { !it.isActive } ?: synthVoicesOffline.minByOrNull { it.sampleIndex }
-                            voice?.trigger(pitch, vel)
-                        }
-                    }
-
-                    // Release synth voices after brief duration during render (approx 180ms)
-                    val sampleReleaseLimit = (0.18f * SAMPLE_RATE).toLong()
-                    if (frameInStep == sampleReleaseLimit) {
-                        synthSequence[step]?.forEach { (pitch, _) ->
-                            synthVoicesOffline.forEach { v ->
-                                if (v.isActive && v.pitch == pitch) {
-                                    v.release()
-                                }
-                            }
-                        }
-                    }
-
-                    // Compute Drum Mix
-                    var drumL = 0f
-                    var drumR = 0f
-                    val iterator = renderTriggers.iterator()
-                    while (iterator.hasNext()) {
-                        val trigger = iterator.next()
-                        if (trigger.index < trigger.pcm.size) {
-                            val amp = trigger.pcm[trigger.index]
-                            drumL += amp
-                            drumR += amp
-                            trigger.index++
-                        } else {
-                            iterator.remove()
-                        }
-                    }
-
-                    // Apply Drum FX (drumOverdrive, drumDelay, drumReverb)
-                    drumL = drumOverdrive.process(drumL)
-                    drumR = drumOverdrive.process(drumR)
-                    val drumDelayOut = drumDelay.process(drumL, drumR)
-                    drumL = drumDelayOut.first
-                    drumR = drumDelayOut.second
-                    drumL = drumReverb.process(drumL)
-                    drumR = drumReverb.process(drumR)
-
-                    drumL *= drumVolume
-                    drumR *= drumVolume
-
-                    // Compute Synth Mix
-                    var synthMono = 0f
-                    for (voice in synthVoicesOffline) {
-                        if (voice.isActive) {
-                            // Standard offline sample generator (simplified sine/saw based on activeWaveform)
-                            val f = 440f * 2.0f.pow((voice.pitch - 69) / 12f)
-                            val t = voice.sampleIndex / SAMPLE_RATE.toFloat()
-                            voice.sampleIndex++
-
-                            var rawWave = 0f
-                            when (activeWaveform) {
-                                Waveform.SINE -> rawWave = sin(2f * PI * f * t).toFloat()
-                                Waveform.TRIANGLE -> rawWave = 2f * abs(2f * ((f * t) % 1.0f) - 1f) - 1f
-                                Waveform.SAWTOOTH -> rawWave = 2f * ((f * t) % 1.0f) - 1f
-                                Waveform.SQUARE -> rawWave = if ((f * t) % 1.0f < 0.5f) 0.4f else -0.4f
-                            }
-
-                            // Minimal ADSR logic for render voice
-                            val attackS = (synthAttack * SAMPLE_RATE).toLong()
-                            val decayS = (synthDecay * SAMPLE_RATE).toLong()
-                            val releaseS = (synthRelease * SAMPLE_RATE).toLong()
-
-                            when (voice.envelopeStage) {
-                                1 -> {
-                                    if (voice.sampleIndex < attackS && attackS > 0) voice.envelopeValue = voice.sampleIndex / attackS.toFloat()
-                                    else { voice.envelopeValue = 1f; voice.envelopeStage = 2 }
-                                }
-                                2 -> {
-                                    val dp = voice.sampleIndex - attackS
-                                    if (dp < decayS && decayS > 0) voice.envelopeValue = 1f - (dp / decayS.toFloat()) * (1f - synthSustain)
-                                    else { voice.envelopeValue = synthSustain; voice.envelopeStage = 3 }
-                                }
-                                3 -> voice.envelopeValue = synthSustain
-                                4 -> {
-                                    val ri = voice.releaseSampleIndex++
-                                    if (ri < releaseS && releaseS > 0) voice.envelopeValue = voice.releaseValue * (1f - ri / releaseS.toFloat())
-                                    else { voice.envelopeValue = 0f; voice.isActive = false; voice.envelopeStage = 0 }
-                                }
-                            }
-                            synthMono += rawWave * voice.envelopeValue * voice.velocity
-                        }
-                    }
-
-                    // Apply Synth FX
-                    synthMono = synthFilter.process(synthMono)
-                    var synthL = synthMono
-                    var synthR = synthMono
-                    val synthDelayOut = synthDelay.process(synthL, synthR)
-                    synthL = synthDelayOut.first
-                    synthR = synthDelayOut.second
-                    synthL = synthReverb.process(synthL)
-                    synthR = synthReverb.process(synthR)
-
-                    synthL *= synthVolume
-                    synthR *= synthVolume
-
-                    // Compute Vocal Mix
-                    var vocalL = 0f
-                    var vocalR = 0f
-                    val vocalBuf = vocalPlaybackBuffer
-                    if (isVocalEnabled && vocalBuf != null && frame < vocalBuf.size) {
-                        val vSamp = vocalBuf[frame] * vocalVolume
-                        vocalL = vSamp
-                        vocalR = vSamp
-                    }
-
-                    // Combine and dynamic limit
-                    var mixL = (drumL + synthL + vocalL) * masterVolume
-                    var mixR = (drumR + synthR + vocalR) * masterVolume
-                    mixL = tanh(mixL).coerceIn(-1.0f, 1.0f)
-                    mixR = tanh(mixR).coerceIn(-1.0f, 1.0f)
-
-                    // Convert to 16-bit short
-                    val shortL = (mixL * 32767).toInt().toShort()
-                    val shortR = (mixR * 32767).toInt().toShort()
-
-                    if (outBytes.remaining() < 4) {
-                        wavWriter.write(outBytes.array(), 0, outBytes.position())
-                        outBytes.clear()
-                    }
-                    outBytes.putShort(shortL)
-                    outBytes.putShort(shortR)
-                }
-
-                if (outBytes.position() > 0) {
-                    wavWriter.write(outBytes.array(), 0, outBytes.position())
-                }
-
-                wavWriter.close()
-                updateWavHeader(outputFile)
-
+                renderPatternToFile(outputFile, includeDrums = true, includeSynth = true, includeVocal = true)
                 onComplete(outputFile)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed exporting audio to WAV", e)
                 onError(e.localizedMessage ?: "Unknown compilation error")
             }
         }
+    }
+
+    /**
+     * Renders the current pattern to separate Drums/Synth/Vocal stem WAV files, so a
+     * pattern built here can be dropped straight into another DAW's multitrack session.
+     */
+    fun exportStemsToWav(outputDir: File, baseName: String, onComplete: (List<File>) -> Unit, onError: (String) -> Unit) {
+        thread(start = true) {
+            try {
+                val files = stemConfigs.map { cfg ->
+                    val file = File(outputDir, "${baseName}_${cfg.label}.wav")
+                    renderPatternToFile(file, cfg.drums, cfg.synth, cfg.vocal)
+                    file
+                }
+                onComplete(files)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed exporting stems", e)
+                onError(e.localizedMessage ?: "Unknown stem export error")
+            }
+        }
+    }
+
+    /** Exports the current pattern as a Standard MIDI File for use in any external DAW. */
+    fun exportMidiFile(outputFile: File): File = MidiFileExporter.export(
+        outputFile = outputFile,
+        bpm = bpm,
+        totalSteps = maxSteps,
+        drumGrid = drumGrid,
+        drumMuted = drumMuted,
+        synthSequence = synthSequence
+    )
+
+    /**
+     * Shared offline render loop used by both the full-mix WAV export and the per-stem
+     * export; `includeDrums/Synth/Vocal` silence (and skip triggering) the buses not
+     * wanted in a given render so stems truly isolate each part.
+     */
+    private fun renderPatternToFile(outputFile: File, includeDrums: Boolean, includeSynth: Boolean, includeVocal: Boolean) {
+        val bpmCalc = bpm
+        val totalSteps = maxSteps
+        val samplesPerStep = ((SAMPLE_RATE * 60f) / (bpmCalc * 4f)).toLong()
+        val totalFrames = (samplesPerStep * totalSteps).toInt()
+
+        val wavWriter = FileOutputStream(outputFile)
+        // Write placeholder WAV header
+        writeWavHeader(wavWriter, totalFrames * 2 * 2) // Stereo (2), 16-bit (2 bytes)
+
+        // Instantiate fresh engines for render to avoid interrupting real-time playback
+        val synthVoicesOffline = Array(8) { SynthVoice() }
+
+        // Track active triggers for drum render
+        class RenderTrigger(val pcm: FloatArray, var index: Int)
+        val renderTriggers = mutableListOf<RenderTrigger>()
+
+        val outBytes = ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN)
+
+        // Render block frame-by-frame
+        for (frame in 0 until totalFrames) {
+            val step = (frame / samplesPerStep).toInt()
+            val frameInStep = frame % samplesPerStep
+
+            // Step start trigger
+            if (frameInStep == 0L) {
+                // 1. Drums
+                if (includeDrums) {
+                    for (sound in DrumSound.entries) {
+                        if (drumGrid[sound.ordinal][step] && !drumMuted[sound.ordinal]) {
+                            customDrumSamples[sound.ordinal]?.let { pcm ->
+                                renderTriggers.add(RenderTrigger(pcm, 0))
+                            }
+                        }
+                    }
+                }
+                // 2. Synth
+                if (includeSynth) {
+                    synthSequence[step]?.forEach { (pitch, vel) ->
+                        val voice = synthVoicesOffline.firstOrNull { !it.isActive } ?: synthVoicesOffline.minByOrNull { it.sampleIndex }
+                        voice?.trigger(pitch, vel)
+                    }
+                }
+            }
+
+            // Release synth voices after brief duration during render (approx 180ms)
+            val sampleReleaseLimit = (0.18f * SAMPLE_RATE).toLong()
+            if (includeSynth && frameInStep == sampleReleaseLimit) {
+                synthSequence[step]?.forEach { (pitch, _) ->
+                    synthVoicesOffline.forEach { v ->
+                        if (v.isActive && v.pitch == pitch) {
+                            v.release()
+                        }
+                    }
+                }
+            }
+
+            // Compute Drum Mix
+            var drumL = 0f
+            var drumR = 0f
+            if (includeDrums) {
+                val iterator = renderTriggers.iterator()
+                while (iterator.hasNext()) {
+                    val trigger = iterator.next()
+                    if (trigger.index < trigger.pcm.size) {
+                        val amp = trigger.pcm[trigger.index]
+                        drumL += amp
+                        drumR += amp
+                        trigger.index++
+                    } else {
+                        iterator.remove()
+                    }
+                }
+
+                // Apply Drum FX (drumOverdrive, drumDelay, drumReverb)
+                drumL = drumOverdrive.process(drumL)
+                drumR = drumOverdrive.process(drumR)
+                val drumDelayOut = drumDelay.process(drumL, drumR)
+                drumL = drumDelayOut.first
+                drumR = drumDelayOut.second
+                drumL = drumReverb.process(drumL)
+                drumR = drumReverb.process(drumR)
+
+                drumL *= drumVolume
+                drumR *= drumVolume
+            }
+
+            // Compute Synth Mix
+            var synthMono = 0f
+            if (includeSynth) {
+                for (voice in synthVoicesOffline) {
+                    if (voice.isActive) {
+                        // Standard offline sample generator (simplified sine/saw based on activeWaveform)
+                        val f = 440f * 2.0f.pow((voice.pitch - 69) / 12f)
+                        val t = voice.sampleIndex / SAMPLE_RATE.toFloat()
+                        voice.sampleIndex++
+
+                        var rawWave = 0f
+                        when (activeWaveform) {
+                            Waveform.SINE -> rawWave = sin(2f * PI * f * t).toFloat()
+                            Waveform.TRIANGLE -> rawWave = 2f * abs(2f * ((f * t) % 1.0f) - 1f) - 1f
+                            Waveform.SAWTOOTH -> rawWave = 2f * ((f * t) % 1.0f) - 1f
+                            Waveform.SQUARE -> rawWave = if ((f * t) % 1.0f < 0.5f) 0.4f else -0.4f
+                        }
+
+                        // Minimal ADSR logic for render voice
+                        val attackS = (synthAttack * SAMPLE_RATE).toLong()
+                        val decayS = (synthDecay * SAMPLE_RATE).toLong()
+                        val releaseS = (synthRelease * SAMPLE_RATE).toLong()
+
+                        when (voice.envelopeStage) {
+                            1 -> {
+                                if (voice.sampleIndex < attackS && attackS > 0) voice.envelopeValue = voice.sampleIndex / attackS.toFloat()
+                                else { voice.envelopeValue = 1f; voice.envelopeStage = 2 }
+                            }
+                            2 -> {
+                                val dp = voice.sampleIndex - attackS
+                                if (dp < decayS && decayS > 0) voice.envelopeValue = 1f - (dp / decayS.toFloat()) * (1f - synthSustain)
+                                else { voice.envelopeValue = synthSustain; voice.envelopeStage = 3 }
+                            }
+                            3 -> voice.envelopeValue = synthSustain
+                            4 -> {
+                                val ri = voice.releaseSampleIndex++
+                                if (ri < releaseS && releaseS > 0) voice.envelopeValue = voice.releaseValue * (1f - ri / releaseS.toFloat())
+                                else { voice.envelopeValue = 0f; voice.isActive = false; voice.envelopeStage = 0 }
+                            }
+                        }
+                        synthMono += rawWave * voice.envelopeValue * voice.velocity
+                    }
+                }
+                // Apply Synth FX
+                synthMono = synthFilter.process(synthMono)
+            }
+
+            var synthL = synthMono
+            var synthR = synthMono
+            if (includeSynth) {
+                val synthDelayOut = synthDelay.process(synthL, synthR)
+                synthL = synthDelayOut.first
+                synthR = synthDelayOut.second
+                synthL = synthReverb.process(synthL)
+                synthR = synthReverb.process(synthR)
+
+                synthL *= synthVolume
+                synthR *= synthVolume
+            } else {
+                synthL = 0f
+                synthR = 0f
+            }
+
+            // Compute Vocal Mix
+            var vocalL = 0f
+            var vocalR = 0f
+            if (includeVocal) {
+                val vocalBuf = vocalPlaybackBuffer
+                if (isVocalEnabled && vocalBuf != null && frame < vocalBuf.size) {
+                    val vSamp = vocalBuf[frame] * vocalVolume
+                    vocalL = vSamp
+                    vocalR = vSamp
+                }
+            }
+
+            // Combine and dynamic limit
+            var mixL = (drumL + synthL + vocalL) * masterVolume
+            var mixR = (drumR + synthR + vocalR) * masterVolume
+            mixL = tanh(mixL).coerceIn(-1.0f, 1.0f)
+            mixR = tanh(mixR).coerceIn(-1.0f, 1.0f)
+
+            // Convert to 16-bit short
+            val shortL = (mixL * 32767).toInt().toShort()
+            val shortR = (mixR * 32767).toInt().toShort()
+
+            if (outBytes.remaining() < 4) {
+                wavWriter.write(outBytes.array(), 0, outBytes.position())
+                outBytes.clear()
+            }
+            outBytes.putShort(shortL)
+            outBytes.putShort(shortR)
+        }
+
+        if (outBytes.position() > 0) {
+            wavWriter.write(outBytes.array(), 0, outBytes.position())
+        }
+
+        wavWriter.close()
+        updateWavHeader(outputFile)
     }
 
     private fun writeWavHeader(out: FileOutputStream, totalDataLen: Int) {

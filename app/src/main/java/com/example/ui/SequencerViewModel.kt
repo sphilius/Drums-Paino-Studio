@@ -10,7 +10,15 @@ import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioDecoder
 import com.example.audio.AudioEngine
 import com.example.audio.DrumSound
+import com.example.audio.DrumVoiceParams
+import com.example.audio.MusicTheory
+import com.example.audio.ScaleType
+import com.example.audio.SoundPack
+import com.example.audio.SoundPackLibrary
+import com.example.audio.SynthPatch
 import com.example.audio.Waveform
+import com.example.database.PresetEntity
+import com.example.database.PresetRepository
 import com.example.database.ProjectDatabase
 import com.example.database.ProjectEntity
 import com.example.database.ProjectRepository
@@ -18,11 +26,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
-class SequencerViewModel(private val repository: ProjectRepository) : ViewModel() {
+class SequencerViewModel(
+    private val repository: ProjectRepository,
+    private val presetRepository: PresetRepository
+) : ViewModel() {
 
     private val TAG = "SequencerViewModel"
 
@@ -77,6 +89,28 @@ class SequencerViewModel(private val repository: ProjectRepository) : ViewModel(
 
     private val _vstStatus = MutableStateFlow("Vessel FX Modules Active")
     val vstStatus = _vstStatus.asStateFlow()
+
+    // Melody assistance: key/scale used to highlight and optionally restrict piano roll entry
+    private val _scaleRoot = MutableStateFlow(0) // 0 = C .. 11 = B
+    val scaleRoot = _scaleRoot.asStateFlow()
+
+    private val _scaleType = MutableStateFlow(ScaleType.MAJOR)
+    val scaleType = _scaleType.asStateFlow()
+
+    private val _scaleLockEnabled = MutableStateFlow(false)
+    val scaleLockEnabled = _scaleLockEnabled.asStateFlow()
+
+    // Sound packs & community library
+    val activeSoundPackName: StateFlow<String> = AudioEngine.activeSoundPackName
+    val builtInSoundPacks: List<SoundPack> = SoundPackLibrary.builtInPacks
+
+    val userSoundPackPresets: StateFlow<List<PresetEntity>> = presetRepository.allPresets
+        .map { list -> list.filter { it.type == PresetRepository.TYPE_SOUND_PACK } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val userSynthPresets: StateFlow<List<PresetEntity>> = presetRepository.allPresets
+        .map { list -> list.filter { it.type == PresetRepository.TYPE_SYNTH_PATCH } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         // Collect engine state periodically or listen
@@ -150,6 +184,8 @@ class SequencerViewModel(private val repository: ProjectRepository) : ViewModel(
         if (found != -1) {
             list.removeAt(found)
         } else {
+            // Scale Lock keeps hobbyists from placing clashing out-of-key notes by accident
+            if (_scaleLockEnabled.value && !isNoteInScale(pitch)) return
             list.add(Pair(pitch, 1.0f))
             // Audition the note
             AudioEngine.triggerSynthKey(pitch, 1.0f)
@@ -162,6 +198,55 @@ class SequencerViewModel(private val repository: ProjectRepository) : ViewModel(
 
     fun isSynthStepActive(step: Int, pitch: Int): Boolean {
         return AudioEngine.synthSequence[step]?.any { it.first == pitch } == true
+    }
+
+    // Melody assistance: key/scale
+    fun setScaleRoot(root: Int) { _scaleRoot.value = root }
+    fun setScaleType(type: ScaleType) { _scaleType.value = type }
+    fun toggleScaleLock() { _scaleLockEnabled.value = !_scaleLockEnabled.value }
+    fun isNoteInScale(note: Int): Boolean = MusicTheory.isInScale(_scaleRoot.value, _scaleType.value, note)
+
+    // Per-track mute (silences a drum voice in playback/export; pads still audition live)
+    fun toggleDrumMute(sound: DrumSound) {
+        AudioEngine.drumMuted[sound.ordinal] = !AudioEngine.drumMuted[sound.ordinal]
+    }
+    fun isDrumMuted(sound: DrumSound): Boolean = AudioEngine.drumMuted[sound.ordinal]
+
+    // Rapid sequencing workflow tools
+    fun duplicateLastBar() {
+        val barCount = getBarCount()
+        if (barCount <= 1) return
+        val bar = 16
+        val lastBarStart = (barCount - 1) * bar
+        val prevBarStart = (barCount - 2) * bar
+        for (sound in DrumSound.entries) {
+            val grid = AudioEngine.drumGrid[sound.ordinal]
+            for (i in 0 until bar) {
+                grid[lastBarStart + i] = grid[prevBarStart + i]
+            }
+        }
+        for (i in 0 until bar) {
+            val src = AudioEngine.synthSequence[prevBarStart + i]
+            if (src != null) {
+                AudioEngine.synthSequence[lastBarStart + i] = src.toMutableList()
+            } else {
+                AudioEngine.synthSequence.remove(lastBarStart + i)
+            }
+        }
+    }
+
+    fun randomizeDrumTrack(sound: DrumSound, density: Float = 0.35f) {
+        val totalSteps = getBarCount() * 16
+        val grid = AudioEngine.drumGrid[sound.ordinal]
+        for (i in 0 until totalSteps) {
+            grid[i] = kotlin.random.Random.nextFloat() < density
+        }
+    }
+
+    fun clearDrumTrack(sound: DrumSound) {
+        val totalSteps = getBarCount() * 16
+        val grid = AudioEngine.drumGrid[sound.ordinal]
+        for (i in 0 until totalSteps) grid[i] = false
     }
 
     // Load sample to Drum Pad
@@ -186,6 +271,130 @@ class SequencerViewModel(private val repository: ProjectRepository) : ViewModel(
     fun clearGrid() {
         AudioEngine.clearSequencer()
         _currentStep.value = 0
+    }
+
+    // Sound design (per-pad procedural synthesis tweaks)
+    fun getDrumVoiceParams(sound: DrumSound): DrumVoiceParams = AudioEngine.drumVoiceParams[sound.ordinal]
+
+    fun updateDrumVoiceParams(sound: DrumSound, params: DrumVoiceParams) {
+        AudioEngine.updateDrumVoiceParams(sound, params)
+    }
+
+    // Sound packs
+    fun applySoundPack(pack: SoundPack) {
+        AudioEngine.applySoundPack(pack)
+        _exportStatus.value = "Applied sound pack: ${pack.name}"
+    }
+
+    fun applyUserSoundPackPreset(entity: PresetEntity) {
+        presetRepository.decodeSoundPack(entity)?.let { applySoundPack(it) }
+    }
+
+    fun saveCurrentAsSoundPack(name: String, author: String) {
+        viewModelScope.launch {
+            val params = DrumSound.entries.associate { it.name to AudioEngine.drumVoiceParams[it.ordinal] }
+            val pack = SoundPack(
+                id = "user_${System.currentTimeMillis()}",
+                name = name,
+                author = author.ifBlank { "Anonymous" },
+                description = "Custom pad tuning shared from BeatCraft Workstation.",
+                voiceParams = params
+            )
+            presetRepository.saveSoundPack(pack, pack.author)
+            _exportStatus.value = "Saved sound pack '$name' to your library!"
+        }
+    }
+
+    fun importSoundPackFromJson(json: String) {
+        viewModelScope.launch {
+            val pack = presetRepository.parseSoundPackJson(json)
+            if (pack != null) {
+                presetRepository.saveSoundPack(pack, pack.author)
+                _exportStatus.value = "Imported sound pack '${pack.name}'"
+            } else {
+                _exportStatus.value = "Could not parse that sound pack JSON."
+            }
+        }
+    }
+
+    // Synth presets
+    fun saveCurrentAsSynthPreset(name: String, author: String) {
+        viewModelScope.launch {
+            val patch = SynthPatch(
+                waveform = AudioEngine.activeWaveform.name,
+                attack = AudioEngine.synthAttack,
+                decay = AudioEngine.synthDecay,
+                sustain = AudioEngine.synthSustain,
+                release = AudioEngine.synthRelease,
+                filterCutoff = AudioEngine.synthFilter.cutoff,
+                filterResonance = AudioEngine.synthFilter.resonance
+            )
+            presetRepository.saveSynthPatch(name, author.ifBlank { "Anonymous" }, patch)
+            _exportStatus.value = "Saved synth preset '$name' to your library!"
+        }
+    }
+
+    fun applySynthPreset(entity: PresetEntity) {
+        val patch = presetRepository.decodeSynthPatch(entity) ?: return
+        AudioEngine.activeWaveform = runCatching { Waveform.valueOf(patch.waveform) }.getOrDefault(AudioEngine.activeWaveform)
+        _synthWave.value = AudioEngine.activeWaveform
+        AudioEngine.synthAttack = patch.attack
+        AudioEngine.synthDecay = patch.decay
+        AudioEngine.synthSustain = patch.sustain
+        AudioEngine.synthRelease = patch.release
+        AudioEngine.synthFilter.cutoff = patch.filterCutoff
+        AudioEngine.synthFilter.resonance = patch.filterResonance
+        _exportStatus.value = "Applied synth preset '${entity.name}'"
+    }
+
+    fun importSynthPresetFromJson(json: String) {
+        viewModelScope.launch {
+            val patch = presetRepository.parseSynthPatchJson(json)
+            if (patch != null) {
+                presetRepository.saveSynthPatch("Imported Preset", "Community", patch)
+                _exportStatus.value = "Imported synth preset into your library."
+            } else {
+                _exportStatus.value = "Could not parse that synth preset JSON."
+            }
+        }
+    }
+
+    fun deletePreset(entity: PresetEntity) {
+        viewModelScope.launch {
+            presetRepository.deletePreset(entity.id)
+            _exportStatus.value = "Removed '${entity.name}' from your library."
+        }
+    }
+
+    // Exports live under app-specific storage (no runtime storage permission needed on any
+    // Android version) and are shared out via FileProvider from the Library tab.
+    private fun exportsDir(context: Context): File =
+        File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Exports").apply { mkdirs() }
+
+    fun listExportedFiles(context: Context): List<File> =
+        exportsDir(context).listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+
+    fun exportStems(context: Context) {
+        _exportStatus.value = "Rendering stems..."
+        val baseName = "BeatCraft_${System.currentTimeMillis()}"
+        AudioEngine.exportStemsToWav(
+            outputDir = exportsDir(context),
+            baseName = baseName,
+            onComplete = { files -> _exportStatus.value = "Exported ${files.size} stems. Share them from the Library tab!" },
+            onError = { err -> _exportStatus.value = "Stem export failed: $err" }
+        )
+    }
+
+    fun exportMidiFile(context: Context) {
+        viewModelScope.launch {
+            try {
+                val file = File(exportsDir(context), "BeatCraft_${System.currentTimeMillis()}.mid")
+                AudioEngine.exportMidiFile(file)
+                _exportStatus.value = "MIDI file exported: ${file.name}"
+            } catch (e: Exception) {
+                _exportStatus.value = "MIDI export failed: ${e.localizedMessage}"
+            }
+        }
     }
 
     // Project Persistence
@@ -223,13 +432,12 @@ class SequencerViewModel(private val repository: ProjectRepository) : ViewModel(
     // Export Wav
     fun exportToDeviceWav(context: Context) {
         _exportStatus.value = "Rendering sequence..."
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val file = File(downloadsDir, "BeatCraft_Sequenced_${System.currentTimeMillis()}.wav")
+        val file = File(exportsDir(context), "BeatCraft_Sequenced_${System.currentTimeMillis()}.wav")
 
         AudioEngine.exportToWav(
             outputFile = file,
             onComplete = { savedFile ->
-                _exportStatus.value = "WAV exported to Downloads: ${savedFile.name}"
+                _exportStatus.value = "WAV exported: ${savedFile.name} (share it from the Library tab)"
             },
             onError = { err ->
                 _exportStatus.value = "Export failed: $err"
@@ -305,8 +513,9 @@ class SequencerViewModelFactory(private val context: Context) : ViewModelProvide
         if (modelClass.isAssignableFrom(SequencerViewModel::class.java)) {
             val db = ProjectDatabase.getDatabase(context)
             val repo = ProjectRepository(db.projectDao())
+            val presetRepo = PresetRepository(db.presetDao())
             @Suppress("UNCHECKED_CAST")
-            return SequencerViewModel(repo) as T
+            return SequencerViewModel(repo, presetRepo) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
