@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Neon Waveform 1 (Cyber Pink) -->
+    <path
+        android:pathData="M24,54 L36,34 L48,74 L60,44 L72,64 L84,54"
+        android:strokeColor="#FF2A7A"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Neon Waveform 2 (Cyber Blue, shifted for depth) -->
+    <path
+        android:pathData="M24,58 L36,38 L48,70 L60,48 L72,60 L84,58"
+        android:strokeColor="#00F0FF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Music Note Symbol inside safe zone -->
+    <path
+        android:fillColor="#00F0FF"
+        android:pathData="M48,22 L68,22 L68,32 L48,32 Z" />
+    <path
+        android:fillColor="#FF2A7A"
+        android:pathData="M44,22 L48,22 L48,46 C48,48 46,50 44,50 C42,50 40,48 40,46 C40,44 42,42 44,42 Z" />
+    <path
+        android:fillColor="#00F0FF"
+        android:pathData="M64,22 L68,22 L68,42 C68,44 66,46 64,46 C62,46 60,44 60,42 C60,40 62,38 64,38 Z" />
+
+</vector>
+

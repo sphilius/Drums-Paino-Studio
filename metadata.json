@@ -1,0 +1,6 @@
+{
+  "name": "MIDI Sequencer & Drum Pad",
+  "description": "A professional low-latency drum pad, piano roll sequencer, and synth workstation with real-time effects, MIDI input/output, multitrack recording, sample importing, and cloud sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
