@@ -27,6 +27,13 @@ View your app in AI Studio: https://ai.studio/apps/3c11a730-6c5b-415a-be71-03b37
 - **Adaptive layout**: a side `NavigationRail` replaces the bottom bar on tablets/Chromebook
   desktop windows, so the same app scales from phone to desktop workstation.
 
+## Play it in a browser
+
+The [`web/`](web/) directory is a touchscreen-first web version of this app — same
+sequencing model and sound-pack format, reimplemented on the Web Audio API so it runs
+on any phone/tablet/desktop with no install, and deploys as a static site to Vercel or
+Cloudflare Pages. See [`web/README.md`](web/README.md) for local dev and deploy steps.
+
 ## Run Locally
 
 **Prerequisites:**  [Android Studio](https://developer.android.com/studio)

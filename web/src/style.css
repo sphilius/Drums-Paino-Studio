@@ -1,0 +1,733 @@
+:root {
+  --bg: #0f1115;
+  --card: rgba(30, 41, 59, 0.4);
+  --card-border: rgba(255, 255, 255, 0.1);
+  --pink: #f43f5e;
+  --blue: #6366f1;
+  --green: #10b981;
+  --orange: #f59e0b;
+  --grey: rgba(148, 163, 184, 0.12);
+  --text: #ffffff;
+  --text-dim: #9ca3af;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.main-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--text);
+  touch-action: manipulation;
+}
+
+/* ---------- Header / Transport ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.85);
+  border-bottom: 1px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+.brand {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--blue);
+  letter-spacing: 0.5px;
+}
+
+.transport {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.85);
+  border-bottom: 1px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+.transport-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transport-row.controls {
+  flex-wrap: wrap;
+}
+
+.icon-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  background: var(--grey);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.icon-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--green);
+}
+
+.icon-btn.record.active {
+  background: rgba(244, 63, 94, 0.2);
+  color: var(--pink);
+}
+
+.step-led {
+  background: #000;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--orange);
+  min-width: 100px;
+  text-align: center;
+}
+
+.pill-btn {
+  border: 1px solid var(--blue);
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--blue);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tempo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tempo-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  min-width: 96px;
+}
+
+input[type='range'] {
+  flex: 1;
+  accent-color: var(--blue);
+  height: 28px;
+}
+
+/* ---------- Tabs ---------- */
+
+.tabbar {
+  display: flex;
+  background: rgba(15, 17, 21, 0.9);
+  border-top: 1px solid var(--card-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  min-width: 68px;
+  border: none;
+  background: transparent;
+  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.tab-btn .tab-icon {
+  font-size: 18px;
+}
+
+.tab-btn.active {
+  color: var(--blue);
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px;
+  padding-bottom: 24px;
+}
+
+.hint {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+  margin-top: 10px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  margin: 0 0 10px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+/* ---------- Drum Pads ---------- */
+
+.pads-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.pad {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: transform 60ms ease-out;
+  touch-action: manipulation;
+}
+
+.pad:active,
+.pad.pressed {
+  transform: scale(0.92);
+}
+
+.pad .pad-name {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pad .pad-index {
+  font-size: 8px;
+  color: var(--text-dim);
+}
+
+.pad .pad-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.pad .tune-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Sequencer grid ---------- */
+
+.seq-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.seq-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.seq-header-row {
+  display: flex;
+  gap: 3px;
+  padding-left: 128px;
+}
+
+.seq-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.seq-track-label {
+  width: 124px;
+  min-width: 124px;
+  height: 34px;
+  background: var(--card);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.seq-track-label .name {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seq-track-label button {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-cell {
+  width: 30px;
+  height: 34px;
+  min-width: 30px;
+  border-radius: 4px;
+  border: 1px solid #374151;
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.step-cell.active {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.step-cell.playhead {
+  border-color: var(--green);
+}
+
+.step-cell.beat-marker {
+  border-left: 2px solid rgba(255, 255, 255, 0.25);
+}
+
+.step-num {
+  width: 30px;
+  min-width: 30px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-dim);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-num.playhead {
+  color: var(--green);
+}
+
+.seq-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bar-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--grey);
+}
+
+.bar-btn.active {
+  background: var(--blue);
+  color: #000;
+}
+
+/* ---------- Piano roll ---------- */
+
+.piano-roll {
+  display: flex;
+  height: 420px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.piano-keys {
+  width: 46px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.piano-key {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  border-bottom: 1px solid #444;
+}
+
+.piano-key.white {
+  background: #fff;
+  color: #000;
+}
+
+.piano-key.black {
+  background: #000;
+  color: #fff;
+}
+
+.piano-key.in-scale {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+
+.piano-grid-scroll {
+  flex: 1;
+  overflow: auto;
+}
+
+.piano-row {
+  display: flex;
+}
+
+.piano-cell {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  flex-shrink: 0;
+  border: 0.5px solid #333;
+  background: var(--card);
+}
+
+.piano-cell.in-scale {
+  background: rgba(30, 41, 59, 0.7);
+}
+
+.piano-cell.active {
+  background: var(--pink);
+}
+
+.piano-cell.playhead {
+  background: rgba(107, 114, 128, 0.5);
+}
+
+.melody-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+select {
+  background: #111827;
+  color: var(--text);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 11px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+/* ---------- Mixer ---------- */
+
+.mixer-row {
+  display: flex;
+  gap: 10px;
+  height: 320px;
+}
+
+.fader-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px 4px;
+}
+
+.fader-col .label {
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.fader-col input[type='range'] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: 100%;
+  accent-color: var(--pink);
+}
+
+.fader-col .pct {
+  font-size: 10px;
+}
+
+/* ---------- Library ---------- */
+
+.lib-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.lib-tab-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--grey);
+}
+
+.lib-tab-btn.active {
+  background: var(--blue);
+  color: #000;
+}
+
+.pack-card,
+.preset-card,
+.stem-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.pack-card.active,
+.preset-card.active {
+  border-color: var(--green);
+}
+
+.pack-card .row,
+.preset-card .row,
+.stem-card .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.small-btn {
+  border: none;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--blue);
+  padding: 4px 6px;
+}
+
+.small-btn.danger {
+  color: var(--pink);
+}
+
+/* ---------- Dropdown ---------- */
+
+.dropdown-wrap {
+  position: relative;
+}
+
+.dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: #1a1d27;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 6px;
+  min-width: 220px;
+  z-index: 15;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dropdown-item:active {
+  background: var(--grey);
+}
+
+/* ---------- Dialog ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 16px;
+}
+
+.dialog {
+  background: #1a1d27;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 18px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.dialog h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.dialog p.hint {
+  text-align: left;
+  margin: 0 0 12px;
+}
+
+.dialog label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  display: block;
+  margin: 10px 0 4px;
+}
+
+.dialog input[type='text'],
+.dialog textarea {
+  width: 100%;
+  background: #0f1115;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.btn.primary {
+  background: var(--blue);
+  color: #000;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+@media (min-width: 720px) {
+  #app {
+    flex-direction: row;
+  }
+
+  .tabbar {
+    flex-direction: column;
+    width: 84px;
+    border-top: none;
+    border-right: 1px solid var(--card-border);
+    order: -1;
+  }
+
+  .pads-grid {
+    max-width: 520px;
+  }
+}
